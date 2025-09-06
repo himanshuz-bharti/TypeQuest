@@ -5,19 +5,24 @@ import { createFallingWord, calculateScore, hasWordReachedGround } from './utils
 export default function PlayGround() {
   const [difficulty, setDifficulty] = useState('medium');
   const [gameStarted, setGameStarted] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(DIFFICULTY_SETTINGS.medium.lives);
   const [textWritten, setTextWritten] = useState('');
   const [fallingWords, setFallingWords] = useState([]);
+  const [Wpm, setWpm] = useState(0);
 
   const animationRef = useRef();
   const lastSpawnTimeRef = useRef(0);
   const lastFrameTimeRef = useRef(0);
   const gameAreaRef = useRef();
+  const gameStartedTimeRef = useRef();
+  const totalPausedTimeRef = useRef(0);
+  const pauseStartRef = useRef(null);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (!gameStarted) return;
+      if (!gameStarted || isPaused) return;
       if (e.key === 'Backspace') {
         setTextWritten((prev) => prev.slice(0, -1));
       } else if (e.key.length === 1 && /^[a-zA-Z]$/.test(e.key)) {
@@ -26,10 +31,10 @@ export default function PlayGround() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameStarted]);
+  }, [gameStarted, isPaused]);
 
   useEffect(() => {
-    if (!gameStarted || textWritten === '') return;
+    if (!gameStarted || isPaused || textWritten === '') return;
 
     setFallingWords((prev) => {
       const matched = prev.find(
@@ -41,19 +46,27 @@ export default function PlayGround() {
         w.id === matched.id ? { ...w, isDestroying: true } : w
       );
 
+      setScore((s) => s + calculateScore(difficulty));
+      setTextWritten('');
+
+      const currentTime = Date.now();
+      const elapsedTime = currentTime - gameStartedTimeRef.current - totalPausedTimeRef.current;
+      const minutesPassed = elapsedTime / 60000;
+      const pointsPerWord = calculateScore(difficulty);
+      const wordsTyped = (score + pointsPerWord) / pointsPerWord;
+      const wpm = minutesPassed > 0 ? Math.round(wordsTyped / minutesPassed) : 0;
+      setWpm(wpm);
+
       setTimeout(() => {
         setFallingWords((p) => p.filter((w) => w.id !== matched.id));
       }, 300);
 
-      setScore((s) => s + calculateScore(difficulty));
-      setTextWritten('');
-
       return updated;
     });
-  }, [textWritten, gameStarted, difficulty]);
+  }, [textWritten, gameStarted, isPaused, difficulty, score]);
 
   useEffect(() => {
-    if (!gameStarted) return;
+    if (!gameStarted || isPaused) return;
 
     const animate = (timestamp) => {
       const settings = DIFFICULTY_SETTINGS[difficulty];
@@ -75,8 +88,8 @@ export default function PlayGround() {
       }
 
       // Update word positions
-      let deaths = 0;
       setFallingWords((prev) => {
+        let deaths = 0;
         const updated = prev.map((word) => {
           if (word.destroyed || word.isDestroying) return word;
 
@@ -86,9 +99,9 @@ export default function PlayGround() {
           const gameHeight = gameAreaRef.current?.clientHeight || 800;
           if (newY > gameHeight - 50) {
             deaths += 1;
+            deaths += 1;
             setLives((l) => {
           const newLives = Math.max(0, l - deaths);
-          console.log("n", newLives);
           return newLives;
         });
             console.log('Word reached ground:', word);
@@ -98,12 +111,11 @@ export default function PlayGround() {
           return { ...word, y: newY };
         });
 
-        // Filter out destroyed words (but keep isDestroying for animation)
+        // Filter out destroyed words 
         return updated.filter((word) => !word.destroyed);
       });
 
-
-      if (gameStarted) {
+      if (gameStarted && !isPaused) {
         animationRef.current = requestAnimationFrame(animate);
       }
     };
@@ -116,28 +128,48 @@ export default function PlayGround() {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [gameStarted, difficulty]);
+  }, [gameStarted, isPaused, difficulty]);
 
-   useEffect(()=>{
-    if(lives==0) setGameStarted(false);
-   },[lives]);
+  useEffect(() => {
+    if (lives === 0) {
+      setGameStarted(false);
+      setIsPaused(false);
+    }
+  }, [lives]);
 
   const resetGame = () => {
     setScore(0);
     setLives(DIFFICULTY_SETTINGS[difficulty].lives);
     setFallingWords([]);
     setTextWritten('');
+    setWpm(0);
     lastSpawnTimeRef.current = 0;
     lastFrameTimeRef.current = 0;
+    totalPausedTimeRef.current = 0;
+    pauseStartRef.current = null;
+    setIsPaused(false);
   };
 
   const handleStart = () => {
     resetGame();
     setGameStarted(true);
+    gameStartedTimeRef.current = Date.now();
   };
 
   const handlePauseResume = () => {
-    setGameStarted((prev) => !prev);
+    if (isPaused) {
+      // Resume
+      const pausedDuration = Date.now() - pauseStartRef.current;
+      lastSpawnTimeRef.current += pausedDuration;
+      lastFrameTimeRef.current += pausedDuration;
+      totalPausedTimeRef.current += pausedDuration;
+      pauseStartRef.current = null;
+      setIsPaused(false);
+    } else {
+      // Pause
+      pauseStartRef.current = Date.now();
+      setIsPaused(true);
+    }
   };
 
   const handleDifficultyChange = (e) => {
@@ -150,9 +182,7 @@ export default function PlayGround() {
 
   return (
     <div className="h-screen bg-gray-100 flex">
-      {/* Left Panel - Full Green */}
       <div className="w-1/4 bg-green-400 p-6 flex flex-col">
-        {/* Typing Display Section */}
         <div className="bg-green-500 p-3 rounded-lg mb-4">
           <h2 className="text-lg font-bold text-gray-800 mb-3">Type to destroy</h2>
           <input
@@ -165,25 +195,32 @@ export default function PlayGround() {
         </div>
 
         <div className="bg-green-300 p-3 rounded-lg mb-4">
-          <h2 className="text-lg font-bold text-gray-800 mb-3">Lives</h2>
-          <div className="flex items-center gap-1">
-            {Array.from({ length: lives }, (_, i) => (
-              <span key={i} className="text-red-500 text-xl">❤️</span>
-            ))}
-            {Array.from({ length: DIFFICULTY_SETTINGS[difficulty].lives - lives }, (_, i) => (
-              <span key={i} className="text-gray-400 text-xl">🤍</span>
-            ))}
+          <div className='flex justify-between'>
+            <div>
+              <h2 className="text-lg font-bold text-gray-800 mb-3">Lives</h2>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: lives }, (_, i) => (
+                  <span key={i} className="text-red-500 text-xl">❤️</span>
+                ))}
+                {Array.from({ length: DIFFICULTY_SETTINGS[difficulty].lives - lives }, (_, i) => (
+                  <span key={i} className="text-gray-400 text-xl">🤍</span>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-800 mb-3">WPM</h2>
+              <div className="text-3xl font-bold text-gray-800 mb-1">{Wpm}</div>
+              <div className="text-xs text-gray-700">Words Per Minute</div>
+            </div>
           </div>
         </div>
 
-      
         <div className="bg-green-300 p-3 rounded-lg mb-3">
           <h2 className="text-lg font-bold text-gray-800 mb-1">Score</h2>
           <div className="text-3xl font-bold text-gray-800 mb-1">{score}</div>
           <div className="text-xs text-gray-700">Current Score</div>
         </div>
 
-       
         <div className="bg-green-300 p-3 rounded-lg mb-4">
           <h3 className="text-lg font-bold text-gray-800 mb-3">Choose difficulty</h3>
           <select
@@ -197,7 +234,6 @@ export default function PlayGround() {
           </select>
         </div>
 
-        
         <div className="bg-green-300 p-4 rounded-lg">
           {!gameStarted ? (
             <button
@@ -211,27 +247,25 @@ export default function PlayGround() {
               onClick={handlePauseResume}
               className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-white text-lg font-bold rounded-lg transition-colors duration-200 shadow-lg hover:shadow-xl"
             >
-              Pause
+              {isPaused ? 'Resume' : 'Pause'}
             </button>
           )}
         </div>
       </div>
 
       <div ref={gameAreaRef} className="flex-1 bg-gradient-to-br from-blue-400 to-blue-600 relative overflow-hidden">
-    
         <div className="absolute inset-0 bg-gradient-to-br from-blue-300 via-blue-500 to-blue-700"></div>
 
-      
         <div className="absolute bottom-0 left-0 right-0 h-12 bg-gray-400"></div>
 
-       
         <div className="relative z-10 h-full flex items-center justify-center">
           {lives === 0 && (
             <div className="h-full flex items-center justify-center">
               <div className="text-center text-white">
                 <div className="text-4xl font-bold mb-4">Game Over!</div>
                 <div className="text-xl mb-2">Final Score: {score}</div>
-                <div className="text-lg opacity-75">Click Restart to play again</div>
+                <div className="text-xl mb-2">WPM: {Wpm}</div>
+                <div className="text-lg opacity-75">Click Start to play again</div>
               </div>
             </div>
           )}
@@ -253,9 +287,12 @@ export default function PlayGround() {
                   transform: 'translate(-50%, -50%)',
                 }}
               >
-                <div className="bg-green-500 border-2 border-green-600 text-white px-4 py-2 rounded-lg shadow-lg font-bold text-lg">
+                {isPaused ? (<div className="bg-green-500 border-2 border-green-600 text-white px-4 py-2 rounded-lg shadow-lg font-bold text-lg">
+                            '#$#@$'
+                      </div>):(
+                  <div className="bg-green-500 border-2 border-green-600 text-white px-4 py-2 rounded-lg shadow-lg font-bold text-lg">
                   {word.text}
-                </div>
+                </div>)}
               </div>
             ))}
         </div>
