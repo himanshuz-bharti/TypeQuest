@@ -99,7 +99,6 @@ export default function PlayGround() {
           const gameHeight = gameAreaRef.current?.clientHeight || 800;
           if (newY > gameHeight - 50) {
             deaths += 1;
-            deaths += 1;
             setLives((l) => {
           const newLives = Math.max(0, l - deaths);
           return newLives;
